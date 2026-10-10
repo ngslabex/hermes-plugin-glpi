@@ -1,0 +1,35 @@
+name: glpi-tools
+label: GLPI Read-Only Tools
+kind: backend
+version: 0.1.0
+description: >
+  Read-only GLPI 12 ticket tools for Hermes Agent. Uses OAuth2 Password grant
+  authentication and exposes status, ticket search, ticket detail, followup,
+  and open-ticket correlation tools. The plugin never creates, updates,
+  assigns, solves, closes, or deletes GLPI records.
+author: ngslabex
+provides_tools:
+  - glpi_status
+  - glpi_find_tickets
+  - glpi_get_ticket
+  - glpi_get_ticket_followups
+  - glpi_find_open_ticket_for_asset
+requires_env:
+  - name: GLPI_URL
+    description: GLPI base URL, for example http://glpi-api
+    password: false
+  - name: GLPI_CLIENT_ID
+    description: GLPI OAuth client ID
+    password: true
+  - name: GLPI_CLIENT_SECRET
+    description: GLPI OAuth client secret
+    password: true
+  - name: GLPI_USERNAME
+    description: Read-only GLPI integration username
+    password: false
+  - name: GLPI_PASSWORD
+    description: Read-only GLPI integration user password
+    password: true
+  - name: GLPI_SCOPE
+    description: OAuth scope, normally api
+    password: false
