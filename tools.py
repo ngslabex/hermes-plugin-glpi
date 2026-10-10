@@ -88,7 +88,15 @@ def _matches(item: Dict[str, Any], terms: Iterable[str]) -> bool:
 
 
 def _fetch_recent(limit: int) -> List[Dict[str, Any]]:
-    data = request_get(ticket_endpoint(), {"page": 1, "limit": min(100, max(limit, 50))})
+    data = request_get(
+        ticket_endpoint(),
+        {
+            "start": 0,
+            "limit": min(100, max(limit, 50)),
+            "sort": "date_mod:desc",
+        },
+    )
+
     return normalize_collection(data)
 
 
