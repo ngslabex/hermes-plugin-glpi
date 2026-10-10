@@ -1,6 +1,6 @@
-"""Small synchronous GLPI 12 High-Level API client.
+"""Synchronous, read-only GLPI 12 High-Level API client.
 
-Only the OAuth token request uses POST. All GLPI resource requests are GET-only.
+The only POST is OAuth token acquisition. Resource requests are GET-only.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 
 class GLPIError(RuntimeError):
-    """A safe GLPI integration error which never includes credentials."""
+    """Safe GLPI error which never embeds credentials."""
 
 
 _TOKEN_CACHE: Dict[str, Any] = {"access_token": None, "expires_at": 0.0}
@@ -47,7 +47,7 @@ def timeout() -> float:
 
 
 def verify_ssl() -> bool:
-    return os.environ.get("GLPI_VERIFY_SSL", "true").lower() not in {
+    return os.environ.get("GLPI_VERIFY_SSL", "true").strip().lower() not in {
         "0", "false", "no", "off"
     }
 
@@ -56,8 +56,7 @@ def _ssl_context():
     if verify_ssl():
         return None
     import ssl
-
-    return ssl._create_unverified_context()  # noqa: SLF001 - explicit lab option
+    return ssl._create_unverified_context()  # noqa: SLF001
 
 
 def _decode_json(raw: bytes, context: str) -> Any:
@@ -67,9 +66,7 @@ def _decode_json(raw: bytes, context: str) -> Any:
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
-        raise GLPIError(
-            f"{context} returned a non-JSON response: {text[:300]}"
-        ) from exc
+        raise GLPIError(f"{context} returned non-JSON: {text[:300]}") from exc
 
 
 def _http_error(exc: urllib.error.HTTPError, method: str, path: str) -> GLPIError:
@@ -85,17 +82,15 @@ def _http_error(exc: urllib.error.HTTPError, method: str, path: str) -> GLPIErro
         )
     except (json.JSONDecodeError, AttributeError):
         detail = body
-    return GLPIError(
-        f"GLPI API {method} {path} -> HTTP {exc.code}: {str(detail)[:300]}"
-    )
+    return GLPIError(f"GLPI API {method} {path} -> HTTP {exc.code}: {str(detail)[:300]}")
 
 
 def get_access_token(force_refresh: bool = False) -> str:
-    """Return a cached OAuth2 access token, refreshing before expiry."""
+    """Get and cache an OAuth2 Password-grant token."""
     now = time.time()
-    token = _TOKEN_CACHE.get("access_token")
-    if not force_refresh and token and now < float(_TOKEN_CACHE["expires_at"]) - 60:
-        return str(token)
+    cached = _TOKEN_CACHE.get("access_token")
+    if not force_refresh and cached and now < float(_TOKEN_CACHE["expires_at"]) - 60:
+        return str(cached)
 
     path = "/api.php/token"
     payload = urllib.parse.urlencode(
@@ -114,37 +109,31 @@ def get_access_token(force_refresh: bool = False) -> str:
         headers={
             "Accept": "application/json",
             "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "hermes-plugin-glpi/0.1.0",
+            "User-Agent": "hermes-plugin-glpi/0.1.2",
         },
         method="POST",
     )
     try:
-        with urllib.request.urlopen(
-            request, timeout=timeout(), context=_ssl_context()
-        ) as response:
+        with urllib.request.urlopen(request, timeout=timeout(), context=_ssl_context()) as response:
             data = _decode_json(response.read(), "GLPI OAuth token endpoint")
     except urllib.error.HTTPError as exc:
         raise _http_error(exc, "POST", path) from exc
     except urllib.error.URLError as exc:
         raise GLPIError(f"GLPI OAuth connection failed: {exc.reason}") from exc
 
-    access_token = data.get("access_token") if isinstance(data, dict) else None
-    if not access_token:
+    token = data.get("access_token") if isinstance(data, dict) else None
+    if not token:
         raise GLPIError("GLPI OAuth response did not include access_token")
-    expires_in = int(data.get("expires_in", 3600))
-    _TOKEN_CACHE.update(
-        {"access_token": access_token, "expires_at": now + max(60, expires_in)}
-    )
-    return str(access_token)
+    try:
+        expires_in = int(data.get("expires_in", 3600))
+    except (TypeError, ValueError):
+        expires_in = 3600
+    _TOKEN_CACHE.update({"access_token": token, "expires_at": now + max(60, expires_in)})
+    return str(token)
 
 
-def request_get(
-    path: str,
-    params: Optional[Dict[str, Any]] = None,
-    *,
-    retry_auth: bool = True,
-) -> Any:
-    """Perform an authenticated read-only GET request."""
+def request_get(path: str, params: Optional[Dict[str, Any]] = None, *, retry_auth: bool = True) -> Any:
+    """Perform one authenticated resource GET."""
     if not path.startswith("/"):
         path = "/" + path
     url = base_url() + path
@@ -156,14 +145,12 @@ def request_get(
         headers={
             "Accept": "application/json",
             "Authorization": f"Bearer {get_access_token()}",
-            "User-Agent": "hermes-plugin-glpi/0.1.0",
+            "User-Agent": "hermes-plugin-glpi/0.1.2",
         },
         method="GET",
     )
     try:
-        with urllib.request.urlopen(
-            request, timeout=timeout(), context=_ssl_context()
-        ) as response:
+        with urllib.request.urlopen(request, timeout=timeout(), context=_ssl_context()) as response:
             return _decode_json(response.read(), f"GLPI GET {path}")
     except urllib.error.HTTPError as exc:
         if exc.code == 401 and retry_auth:
@@ -179,8 +166,13 @@ def endpoint(resource: str) -> str:
     return f"{api_prefix()}/{resource.lstrip('/')}"
 
 
+def ticket_endpoint(ticket_id: Optional[int] = None) -> str:
+    path = endpoint("Assistance/Ticket")
+    return f"{path}/{int(ticket_id)}" if ticket_id is not None else path
+
+
 def normalize_collection(data: Any) -> List[Dict[str, Any]]:
-    """Normalize known GLPI collection envelope variants."""
+    """Normalize common GLPI collection envelopes."""
     if isinstance(data, list):
         return [item for item in data if isinstance(item, dict)]
     if not isinstance(data, dict):
@@ -199,8 +191,3 @@ def first_value(item: Dict[str, Any], names: Iterable[str], default: Any = None)
         if name in item and item[name] not in (None, ""):
             return item[name]
     return default
-
-
-def ticket_endpoint(ticket_id: Optional[int] = None) -> str:
-    base = endpoint("Assistance/Ticket")
-    return f"{base}/{int(ticket_id)}" if ticket_id is not None else base

@@ -1,8 +1,14 @@
 # hermes-plugin-glpi
 
-Read-only GLPI 12 ticket tools for Hermes Agent.
+A read-only GLPI 12 plugin for Hermes Agent 0.21.5 or later.
 
-Version `0.1.0` uses the GLPI High-Level REST API with OAuth2 Password grant and exposes only read operations. It contains no ticket create, update, assignment, solve, close, followup-create, or delete handlers.
+## Changes in v0.1.2
+
+- Fixed `PluginContext.register_tool()` registration using explicit `name`, `toolset`, `schema`, and `handler` arguments.
+- Added `requires_env` metadata to every registered tool.
+- Changed `glpi_status` to probe the real ticket API instead of `/Status`, eliminating the extra `status` OAuth scope requirement and its HTTP 403 failure.
+- Kept all GLPI resource operations GET-only.
+- Improved OAuth cache, HTTP errors, schema descriptions, tests, and package validation.
 
 ## Tools
 
@@ -11,14 +17,6 @@ Version `0.1.0` uses the GLPI High-Level REST API with OAuth2 Password grant and
 - `glpi_get_ticket`
 - `glpi_get_ticket_followups`
 - `glpi_find_open_ticket_for_asset`
-
-## Requirements
-
-- GLPI 12
-- Hermes Agent plugin support
-- A dedicated GLPI OAuth client with only the `Password` grant and `api` scope
-- A dedicated GLPI user with a read-only profile and access to the required entities
-- Hermes and GLPI connected to the same Docker Swarm overlay network
 
 ## Environment
 
@@ -34,11 +32,9 @@ GLPI_VERIFY_SSL=true
 GLPI_API_PREFIX=/api.php/v2.2
 ```
 
-`GLPI_API_PREFIX` is configurable because the High-Level API version available in GLPI can change. Confirm the active version in GLPI under **Setup > General > API > API Endpoints**. For GLPI 12, the documentation interface is commonly exposed under `/api.php/v2.2/doc`.
+`GLPI_SCOPE=api` is sufficient in v0.1.2 because `glpi_status` checks ticket API access instead of the separately scoped GLPI status endpoint.
 
 ## Docker Swarm
-
-Pass the variables into the Hermes process environment:
 
 ```yaml
 services:
@@ -55,67 +51,58 @@ services:
       GLPI_API_PREFIX: "${GLPI_API_PREFIX:-/api.php/v2.2}"
 ```
 
-## Install
+## OAuth client
+
+Use a dedicated OAuth client:
+
+- Grant: `Password`
+- Scope: `api`
+- User: a dedicated non-superuser account such as `hermes-integration`
+- Profile: ticket/followup read access only
+
+## Install or upgrade
 
 ```bash
-hermes plugins install ngslabex/hermes-plugin-glpi
+hermes plugins install ngslabex/hermes-plugin-glpi --force
 hermes plugins enable glpi-tools
-```
-
-Manual installation:
-
-```bash
-git clone https://github.com/ngslabex/hermes-plugin-glpi.git \
-  /opt/data/plugins/glpi-tools
-```
-
-Restart Hermes after installation:
-
-```bash
 docker service update --force hermes_hermes
+```
+
+Manual pinned installation:
+
+```bash
+git clone --branch v0.1.2 --depth 1 \
+  https://github.com/ngslabex/hermes-plugin-glpi.git \
+  /opt/data/plugins/glpi-tools
 ```
 
 ## Verify
 
 ```bash
-python -m py_compile \
-  /opt/data/plugins/glpi-tools/client.py \
-  /opt/data/plugins/glpi-tools/schemas.py \
-  /opt/data/plugins/glpi-tools/tools.py
+hermes plugins doctor /opt/data/plugins/glpi-tools
+hermes plugins validate /opt/data/plugins/glpi-tools
 ```
 
-Ask Hermes:
+Expected:
 
 ```text
-Use glpi_status to test GLPI OAuth and API connectivity.
+registrations: 5 tool(s), 0 hook(s)
+Validation passed.
 ```
 
+Mattermost test:
+
 ```text
-Use glpi_find_open_ticket_for_asset to find open tickets for
-CBS002-RTR-01 or 10.251.2.11. Do not create or modify tickets.
+@hermes glpi_status aracını kullanarak GLPI OAuth ve salt okunur ticket API erişimini kontrol et. Gizli değerleri gösterme.
 ```
 
 ## Security
 
-- Use a separate OAuth client for Hermes.
-- Allow only `Password` grant and `api` scope.
-- Use a separate `hermes-integration` user.
-- Give the user a read-only profile and only the required entities.
-- Keep all credentials out of Git.
-- Never log access tokens, client secrets, or passwords.
-- Rotate credentials immediately if exposed.
+The plugin implements no GLPI resource POST, PUT, PATCH, or DELETE handlers. OAuth token acquisition is the only POST request. Use a dedicated read-only GLPI profile, keep credentials out of Git, and rotate any credential exposed in logs or screenshots.
 
-## Endpoint compatibility
+## API compatibility
 
-GLPI 12 exposes versioned High-Level API routes and publishes an OpenAPI interface. This plugin defaults to `/api.php/v2.2` and uses `/Assistance/Ticket` for ticket reads. The followup tool tries a small set of read-only endpoint variants because route names may vary between API revisions. If your GLPI deployment advertises another API version, set `GLPI_API_PREFIX` accordingly and run `glpi_status` plus the included smoke tests before production use.
-
-## Limitations in v0.1.0
-
-- The plugin is read-only by design.
-- Free-text and asset correlation use a bounded recent ticket result set and client-side matching.
-- Exact endpoint schemas may differ by GLPI High-Level API version.
-- Followup endpoint availability must be validated against the instance OpenAPI page.
-- No automatic ticket creation or ticket state changes are implemented.
+The default prefix is `/api.php/v2.2`. Verify the active High-Level API version in the GLPI API Endpoints/OpenAPI page. If required, override `GLPI_API_PREFIX` without changing plugin code.
 
 ## License
 

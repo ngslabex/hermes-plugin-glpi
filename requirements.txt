@@ -1,1 +1,1 @@
-# No third-party runtime dependencies. Uses Python stdlib only.
+# No third-party runtime dependencies.
