@@ -8,6 +8,9 @@ PACKAGE = "glpi_plugin_test"
 
 
 def load_package():
+    for key in list(sys.modules):
+        if key == PACKAGE or key.startswith(PACKAGE + "."):
+            del sys.modules[key]
     spec = importlib.util.spec_from_file_location(
         PACKAGE,
         ROOT / "__init__.py",
@@ -36,8 +39,7 @@ def test_registers_five_named_tools():
     package = load_package()
     ctx = FakeContext()
     package.register(ctx)
-    names = [call[0] for call in ctx.calls]
-    assert names == [
+    assert [call[0] for call in ctx.calls] == [
         "glpi_status",
         "glpi_find_tickets",
         "glpi_get_ticket",
@@ -48,7 +50,25 @@ def test_registers_five_named_tools():
     assert all(call[4]["requires_env"] for call in ctx.calls)
 
 
-def test_status_uses_ticket_probe(monkeypatch):
+def test_fetch_recent_paginates_and_deduplicates(monkeypatch):
+    tools = load_module("tools")
+    pages = {
+        0: {"data": [{"id": i, "name": f"T{i}"} for i in range(1, 101)]},
+        100: {"data": [{"id": i, "name": f"T{i}"} for i in range(101, 201)]},
+        200: {"data": [{"id": i, "name": f"T{i}"} for i in range(201, 251)]},
+    }
+
+    def fake_get(path, params=None):
+        return pages.get((params or {}).get("start", 0), {"data": []})
+
+    monkeypatch.setattr(tools, "request_get", fake_get)
+    result = tools._fetch_recent(300)
+    assert len(result) == 250
+    assert result[0]["id"] == 1
+    assert result[-1]["id"] == 250
+
+
+def test_status_uses_start_and_ticket_probe(monkeypatch):
     tools = load_module("tools")
     monkeypatch.setattr(tools, "get_access_token", lambda: "secret-token")
     monkeypatch.setattr(tools, "base_url", lambda: "http://glpi-api")
@@ -65,21 +85,29 @@ def test_status_uses_ticket_probe(monkeypatch):
     result = json.loads(tools.handle_glpi_status({}))
     assert result["ok"] is True
     assert result["ticket_api_accessible"] is True
-    assert result["probe_ticket_count"] == 1
-    assert seen["path"].endswith("/Assistance/Ticket")
-    assert "Status" not in seen["path"]
+    assert seen["params"]["start"] == 0
+    assert "page" not in seen["params"]
 
 
-def test_asset_handler_read_only(monkeypatch):
+def test_asset_handler_reports_diagnostics(monkeypatch):
     tools = load_module("tools")
     monkeypatch.setattr(
         tools,
         "_fetch_recent",
-        lambda limit: [{"id": 9, "name": "CBS002-RTR-01 10.251.2.11 unavailable", "status": "Assigned"}],
+        lambda: [
+            {"id": 263, "name": "CBS002-RTR-01 10.251.2.11 unavailable", "status": "Assigned", "priority": "High"},
+            {"id": 264, "name": "Other", "status": "Solved"},
+        ],
     )
-    result = json.loads(tools.handle_glpi_find_open_ticket_for_asset({"asset_name": "CBS002-RTR-01", "ip_address": "10.251.2.11"}))
+    result = json.loads(
+        tools.handle_glpi_find_open_ticket_for_asset(
+            {"asset_name": "CBS002-RTR-01", "ip_address": "10.251.2.11"}
+        )
+    )
     assert result["count"] == 1
-    assert result["read_only"] is True
+    assert result["scanned"] == 2
+    assert result["open_scanned"] == 1
+    assert result["match_mode"] == "all_terms"
 
 
 def test_closed_statuses():

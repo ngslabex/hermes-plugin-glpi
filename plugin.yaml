@@ -4,9 +4,9 @@ kind: backend
 version: 0.1.3
 description: >
   Read-only GLPI 12 ticket tools for Hermes Agent. Uses OAuth2 Password grant
-  authentication and exposes OAuth/API health, ticket search, ticket detail,
-  followup lookup, and open-ticket correlation. No GLPI resource write methods
-  are implemented.
+  authentication and exposes OAuth/API health, paginated ticket search, ticket
+  detail, timeline/followup lookup, and open-ticket correlation. No GLPI
+  resource write methods are implemented.
 author: ngslabex
 requires_hermes: ">=0.21.5"
 provides_tools:
